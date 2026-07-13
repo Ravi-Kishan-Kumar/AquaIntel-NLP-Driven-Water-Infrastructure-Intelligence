@@ -203,10 +203,11 @@ The dataset (`large_water_complaints_dataset.csv`) contains ~10,000 synthetic wa
 
 ## 👨‍💻 Author
 
-**Ravi Kumar** — B.E. / B.Tech Student  
-**Srikar Reddy** — B.E. / B.Tech Student
-**Rayala Yuvaraj Vaishnav** — B.E. / B.Tech Student
-Course: Natural Language Processing  
+- **Ravi Kumar** — B.E. / B.Tech Student
+- **Srikar Reddy** — B.E. / B.Tech Student
+- **Rayala Yuvaraj Vaishnav** — B.E. / B.Tech Student
+
+**Course:** Natural Language Processing 
 
 ---
 
