@@ -16,6 +16,8 @@ from auth.db import (
     get_all_complaints,
     update_complaint_status,
     get_complaint_stats,
+    get_sla_breaches,
+    compute_ihi_scores,
     REGION_COORDINATES,
 )
 from utils import load_models, load_metrics
@@ -345,6 +347,81 @@ def _tab_overview():
 
     st.subheader("Operational Reports")
     _download_reports(df, 'all_complaints')
+
+    st.markdown("---")
+
+    # ── Infrastructure Health Index (IHI) Leaderboard ────────────────────────
+    st.subheader("🏥 Infrastructure Health Index (IHI) by Region")
+    st.caption(
+        "Composite 0–100 score. Formula: 100 − penalties for volume, "
+        "high-priority open cases, unresolved rate, SLA breaches, and recurring patterns."
+    )
+    ihi_data = compute_ihi_scores()
+    if ihi_data:
+        ihi_df = pd.DataFrame(ihi_data)
+        ihi_df.columns = ['Region','IHI Score','Health Status',
+                          'Total','High-Pri Open','Unresolved','SLA Breaches']
+
+        # Colour-coded IHI score column
+        def _ihi_color(v):
+            if   v >= 80: return 'background-color:#052e16; color:#34d399'
+            elif v >= 60: return 'background-color:#1c1207; color:#fbbf24'
+            elif v >= 40: return 'background-color:#1c0a07; color:#f97316'
+            else:         return 'background-color:#1c0608; color:#f87171'
+
+        styled = ihi_df.style.applymap(_ihi_color, subset=['IHI Score'])
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+
+        # Summary metrics row
+        critical = sum(1 for r in ihi_data if r['ihi'] < 40)
+        at_risk  = sum(1 for r in ihi_data if 40 <= r['ihi'] < 60)
+        healthy  = sum(1 for r in ihi_data if r['ihi'] >= 80)
+        ih1, ih2, ih3, ih4 = st.columns(4)
+        for col, (v, l, s) in zip([ih1,ih2,ih3,ih4],[
+            (critical,                       '🔴 Critical Regions',  'color:#f87171'),
+            (at_risk,                        '🟠 Degraded Regions',  'color:#f97316'),
+            (healthy,                        '🟢 Healthy Regions',   'color:#34d399'),
+            (round(sum(r['ihi'] for r in ihi_data)/max(len(ihi_data),1),1), 'Avg IHI', 'color:#38bdf8'),
+        ]):
+            col.markdown(
+                f'<div class="metric-card"><div class="val" style="{s}">{v}</div>'
+                f'<div class="lbl">{l}</div></div>', unsafe_allow_html=True)
+    else:
+        st.info("IHI will appear once complaints are submitted.")
+
+    st.markdown("---")
+
+    # ── SLA Breach Alerts ────────────────────────────────────────────────
+    st.subheader("⏰ SLA Breach Alerts")
+    st.caption("High-priority: open > 24h │ Medium: open > 48h │ Low: open > 72h")
+    breaches = get_sla_breaches()
+    if breaches:
+        breach_df = pd.DataFrame(breaches)[[
+            'ticket_id','location','category','priority',
+            'hours_open','sla_limit_h','overdue_h','full_name','submitted_at'
+        ]].copy()
+        breach_df['submitted_at'] = pd.to_datetime(breach_df['submitted_at']).dt.strftime('%Y-%m-%d %H:%M')
+        breach_df.columns = [
+            'Ticket','Location','Category','Priority',
+            'Hours Open','SLA Limit (h)','Overdue (h)','Citizen','Submitted'
+        ]
+
+        def _breach_row(v):
+            if   v > 48: return 'background-color:#1c0608; color:#f87171'
+            elif v > 24: return 'background-color:#1c0a07; color:#f97316'
+            else:        return 'background-color:#1c1207; color:#fbbf24'
+
+        st.dataframe(
+            breach_df.style.applymap(_breach_row, subset=['Overdue (h)']),
+            use_container_width=True, hide_index=True
+        )
+        st.download_button(
+            '⬇️ Download SLA Breach Report',
+            breach_df.to_csv(index=False).encode('utf-8'),
+            'sla_breaches.csv', 'text/csv'
+        )
+    else:
+        st.success("✅ No SLA breaches detected. All active complaints are within response time limits.")
 
 
 # â”€â”€ Tab 2: Analytics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

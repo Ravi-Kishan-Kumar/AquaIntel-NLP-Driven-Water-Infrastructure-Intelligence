@@ -11,9 +11,10 @@ import pandas as pd
 from datetime import datetime
 
 from auth.db import (
-    submit_complaint, get_complaints_by_user, BANGALORE_REGIONS
+    submit_complaint, get_complaints_by_user, BANGALORE_REGIONS,
+    get_recent_complaints_by_location,
 )
-from utils import load_models, predict_with_confidence
+from utils import load_models, predict_with_confidence, find_similar_complaints
 
 # ── CSS ────────────────────────────────────────────────────────────────────────
 PORTAL_CSS = """
@@ -241,6 +242,49 @@ def _page_submit(user, vectorizer, cat_model, pri_model, models_ok):
             conf_cat       = round(conf_cat, 2),
             conf_pri       = round(conf_pri, 2)
         )
+
+        # ── Semantic Similarity Check ─────────────────────────────────────────
+        candidates = get_recent_complaints_by_location(
+            location, days=7, exclude_ticket=ticket_id
+        )
+        similar = find_similar_complaints(
+            complaint_text, candidates, vectorizer, threshold=0.55
+        )
+
+        if similar:
+            top = similar[0]
+            # humanise the timestamp
+            try:
+                from datetime import datetime as _dt
+                delta    = _dt.now() - _dt.fromisoformat(top['submitted_at'])
+                hrs      = int(delta.total_seconds() // 3600)
+                mins     = int((delta.total_seconds() % 3600) // 60)
+                ago_str  = (f"{hrs} hour{'s' if hrs!=1 else ''} ago"
+                            if hrs > 0 else f"{mins} minute{'s' if mins!=1 else ''} ago")
+            except Exception:
+                ago_str = "recently"
+
+            st.markdown(f"""
+            <div style="background:rgba(251,191,36,0.10); border:1px solid rgba(251,191,36,0.35);
+                        border-radius:14px; padding:18px 20px; margin-top:14px;">
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+                    <span style="font-size:1.3rem;">⚠️</span>
+                    <span style="font-weight:700; color:#fbbf24; font-size:1rem;">Similar Complaint Detected</span>
+                    <span style="background:rgba(251,191,36,.2); color:#fbbf24; font-size:.72rem;
+                                 font-weight:600; padding:2px 10px; border-radius:999px;
+                                 margin-left:auto;">{top['similarity']:.0f}% similar</span>
+                </div>
+                <p style="color:#cbd5e1; margin:0 0 8px 0; font-size:.9rem; line-height:1.55;">
+                    A <b>{top['category']}</b> complaint was reported in
+                    <b>{top['location']}</b> <span style="color:#94a3b8;">{ago_str}</span> —
+                    <span style="font-family:monospace; color:#38bdf8;">{top['ticket_id']}</span>.
+                </p>
+                <p style="margin:0; font-size:.82rem; color:#94a3b8;">
+                    🔗 Your ticket <b>{ticket_id}</b> has been automatically flagged for
+                    coordinated dispatch to avoid duplicate field visits.
+                </p>
+            </div>""", unsafe_allow_html=True)
+        # ── /Similarity ───────────────────────────────────────────────────────
 
         st.markdown("---")
         st.success("✅ Complaint submitted successfully!")

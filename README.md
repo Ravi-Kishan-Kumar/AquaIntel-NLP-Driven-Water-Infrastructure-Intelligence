@@ -35,7 +35,12 @@ Raw Complaint Text (English / Kannada / Code-mixed)
    • Naive Bayes   (MultinomialNB)
    • Logistic Regression (class_weight='balanced', max_iter=1000)
         ↓
-   Outputs: Category + Priority + Confidence Scores
+   Semantic Similarity (NEW)
+   • Cosine Similarity on TF-IDF vectors via sklearn.metrics.pairwise
+   • Detects duplicate / similar complaints in same neighborhood (threshold ≥ 55%)
+   • No heavy PyTorch models — fully lightweight
+        ↓
+   Outputs: Category + Priority + Confidence Scores + Similarity Alerts
 ```
 
 ---
@@ -78,20 +83,24 @@ NLP Water Complaint Analyzer/
 - Submit water complaints in **English, Kannada, or code-mixed text**
 - AI classifies complaint → shows **category + priority + confidence scores**
 - Low-confidence warning if model is uncertain (<55%)
+- ⚠️ **Semantic Similarity Check** — detects if a similar complaint was filed in the same neighbourhood within 7 days using TF-IDF cosine similarity. Automatically links the ticket to avoid duplicate dispatch
 - Generates a unique **Ticket ID** (e.g. `WC-20260604-3FF6D5`)
 - **My Complaints** — full history with status tracking and resolution notes
 
-### 🏛️ Authority Portal (6 Dashboard Tabs)
+### 🏛️ Authority Portal (8 Dashboard Tabs)
 
 | Tab | Description |
 |-----|-------------|
 | **Overview** | Live metrics: total, pending, in-progress, resolved, high-priority open |
+| **Overview → IHI** | 🏥 **Infrastructure Health Index (IHI)** — 0–100 composite score per region (volume + priority + unresolved rate + SLA breaches + recurring patterns) |
+| **Overview → SLA** | ⏰ **SLA Breach Alerts** — flags tickets overdue: High>24h, Medium>48h, Low>72h with colour-coded overdue hours |
 | **Analytics** | Category charts, priority distribution, time trends, word cloud |
 | **Hotspot Map** | Interactive Folium map with color-coded circles + heatmap layer |
 | **Region Analysis** | Drill-down by Bangalore locality with category/priority breakdown |
 | **Recurring Issues** | Detects locations with repeated complaints within configurable time windows |
 | **Manage Complaints** | Update status, add resolution notes, filter + download reports |
 | **Model Metrics** | NB vs Logistic Regression comparison (Accuracy, Precision, Recall, F1) |
+| **Energy & System** | NLP system CPU/RAM usage, computational energy (Joules), waste heat per pipeline stage |
 
 ### 🗺️ Hotspot Map Legend
 | Circle Color | Risk Level | Meaning |
@@ -109,12 +118,16 @@ NLP Water Complaint Analyzer/
 | Frontend / UI | Streamlit |
 | NLP Preprocessing | NLTK (tokenization, lemmatization, stopwords) |
 | Feature Extraction | scikit-learn TF-IDF Vectorizer |
+| Semantic Similarity | `sklearn.metrics.pairwise.cosine_similarity` on TF-IDF vectors |
 | Classification | Logistic Regression + Naive Bayes (scikit-learn) |
+| Infrastructure Health | Custom IHI formula (SQL aggregates + Python scoring) |
+| SLA Breach Detection | SQLite timestamp queries + Python datetime arithmetic |
 | Database | SQLite (via Python `sqlite3`) |
 | Authentication | bcrypt password hashing |
 | Maps | Folium (circle markers + heatmap) |
 | Charts | Matplotlib, Seaborn, Plotly |
 | Word Cloud | wordcloud library |
+| System Metrics | psutil (CPU, RAM, Disk — live) |
 
 ---
 

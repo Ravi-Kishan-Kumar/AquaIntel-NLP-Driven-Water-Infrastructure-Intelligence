@@ -276,3 +276,148 @@ def get_complaint_stats():
     stats['high_priority_open'] = c.fetchone()[0]
     conn.close()
     return stats
+
+
+def get_recent_complaints_by_location(location, days=7, exclude_ticket=None):
+    """
+    Return recent unresolved complaints from the same locality —
+    used as candidates for TF-IDF similarity matching.
+    """
+    conn = get_connection()
+    c    = conn.cursor()
+    cutoff = (datetime.now() - __import__('datetime').timedelta(days=days)).isoformat()
+    if exclude_ticket:
+        c.execute(
+            '''SELECT ticket_id, complaint_text, submitted_at, category, location
+               FROM complaints
+               WHERE location=? AND status!='Resolved'
+                 AND submitted_at >= ? AND ticket_id != ?
+               ORDER BY submitted_at DESC LIMIT 50''',
+            (location, cutoff, exclude_ticket)
+        )
+    else:
+        c.execute(
+            '''SELECT ticket_id, complaint_text, submitted_at, category, location
+               FROM complaints
+               WHERE location=? AND status!='Resolved' AND submitted_at >= ?
+               ORDER BY submitted_at DESC LIMIT 50''',
+            (location, cutoff)
+        )
+    rows = c.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_sla_breaches():
+    """
+    Return all open complaints that have breached their SLA response time:
+      High   priority → open > 24 hours
+      Medium priority → open > 48 hours
+      Low    priority → open > 72 hours
+    """
+    conn   = get_connection()
+    c      = conn.cursor()
+    now    = datetime.now()
+    limits = {'High': 24, 'Medium': 48, 'Low': 72}
+    breaches = []
+    for priority, hours in limits.items():
+        cutoff = (now - __import__('datetime').timedelta(hours=hours)).isoformat()
+        c.execute(
+            '''SELECT c.ticket_id, c.location, c.category, c.priority,
+                      c.submitted_at, c.status, u.full_name
+               FROM complaints c JOIN users u ON c.user_id=u.id
+               WHERE c.priority=? AND c.status!='Resolved'
+                 AND c.submitted_at <= ?
+               ORDER BY c.submitted_at ASC''',
+            (priority, cutoff)
+        )
+        for row in c.fetchall():
+            d = dict(row)
+            elapsed = now - datetime.fromisoformat(d['submitted_at'])
+            d['hours_open']  = round(elapsed.total_seconds() / 3600, 1)
+            d['sla_limit_h'] = hours
+            d['overdue_h']   = round(d['hours_open'] - hours, 1)
+            breaches.append(d)
+    conn.close()
+    breaches.sort(key=lambda x: -x['overdue_h'])
+    return breaches
+
+
+def compute_ihi_scores():
+    """
+    Infrastructure Health Index (IHI) — 0 to 100 score per Bangalore region.
+
+    Formula (penalties subtracted from 100):
+      - Volume penalty   : min(total_complaints × 1.5, 20)
+      - High-pri penalty : min(high_priority_open × 4, 25)
+      - Unresolved rate  : unresolved_pct × 0.30  (max 30)
+      - SLA breach penalty: min(sla_breaches × 6, 20)
+      - Recurring bonus  : −5 if 3+ same-category complaints
+
+    IHI = max(0, min(100, 100 − total_penalties))
+    Health levels: ≥80 Healthy | 60–79 At Risk | 40–59 Degraded | <40 Critical
+    """
+    conn = get_connection()
+    c    = conn.cursor()
+    now  = datetime.now()
+    h24  = (now - __import__('datetime').timedelta(hours=24)).isoformat()
+
+    c.execute(
+        '''SELECT location,
+                  COUNT(*) AS total,
+                  SUM(CASE WHEN priority='High' AND status!='Resolved' THEN 1 ELSE 0 END) AS high_open,
+                  SUM(CASE WHEN status!='Resolved' THEN 1 ELSE 0 END) AS unresolved,
+                  SUM(CASE WHEN priority='High' AND status!='Resolved'
+                            AND submitted_at <= ? THEN 1 ELSE 0 END) AS sla_breach
+           FROM complaints
+           GROUP BY location''',
+        (h24,)
+    )
+    rows = c.fetchall()
+    conn.close()
+
+    results = []
+    for row in rows:
+        d = dict(row)
+        total      = max(d['total'], 1)
+        unres_pct  = d['unresolved'] / total
+
+        # Recurring: same category appears 3+ times in this location
+        conn2 = get_connection()
+        c2    = conn2.cursor()
+        c2.execute(
+            '''SELECT MAX(cnt) FROM
+               (SELECT COUNT(*) AS cnt FROM complaints
+                WHERE location=? GROUP BY category)''',
+            (d['location'],)
+        )
+        max_cat = c2.fetchone()[0] or 0
+        conn2.close()
+        recurring_pen = 5 if max_cat >= 3 else 0
+
+        penalties = (
+            min(d['total'] * 1.5, 20) +
+            min(d['high_open'] * 4,  25) +
+            unres_pct * 30 +
+            min(d['sla_breach'] * 6, 20) +
+            recurring_pen
+        )
+        ihi = round(max(0, min(100, 100 - penalties)), 1)
+
+        if   ihi >= 80: health = '🟢 Healthy'
+        elif ihi >= 60: health = '🟡 At Risk'
+        elif ihi >= 40: health = '🟠 Degraded'
+        else:           health = '🔴 Critical'
+
+        results.append({
+            'location':    d['location'],
+            'ihi':         ihi,
+            'health':      health,
+            'total':       d['total'],
+            'high_open':   d['high_open'],
+            'unresolved':  d['unresolved'],
+            'sla_breaches':d['sla_breach'],
+        })
+
+    results.sort(key=lambda x: x['ihi'])  # worst first
+    return results
